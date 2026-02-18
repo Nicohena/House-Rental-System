@@ -20,6 +20,8 @@ const {
   updateBooking,
   getBookingStats,
   getAllBookings,
+  getPendingBookings,
+  getRevenueAnalytics,
   cancelBooking
 } = require('../controllers/bookingController');
 
@@ -33,6 +35,10 @@ router.route('/')
 
 // Statistics (owners and admins)
 router.get('/stats', authorize('owner', 'admin'), getBookingStats);
+
+// Analytics endpoints
+router.get('/pending', authorize('owner'), getPendingBookings);
+router.get('/revenue', authorize('owner'), getRevenueAnalytics);
 
 // Admin: Get all bookings
 router.get('/all', authorize('admin'), getAllBookings);

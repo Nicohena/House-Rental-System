@@ -27,13 +27,15 @@ const {
   removeImage
 } = require('../controllers/houseController');
 
+// Protected routes
+router.post('/', protect, isOwner, createHouse);
+router.get('/my-listings', protect, isOwner, getMyListings); // Moved up to prevent shadowing
+
 // Public routes (with optional auth for smart match)
 router.get('/', optionalAuth, getHouses);
 router.get('/:id', optionalAuth, getHouseById);
 
-// Protected routes
-router.post('/', protect, isOwner, createHouse);
-router.get('/my-listings', protect, isOwner, getMyListings);
+// More protected routes
 router.patch('/:id', protect, updateHouse);
 router.delete('/:id', protect, deleteHouse);
 router.post('/:id/ratings', protect, addRating);

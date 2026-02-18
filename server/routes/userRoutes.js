@@ -12,8 +12,11 @@
 const express = require('express');
 const router = express.Router();
 const { protect } = require('../middlewares/authMiddleware');
+const { upload } = require('../controllers/uploadController');
 const {
   getUserById,
+  uploadAvatar,
+  removeAvatar,
   updateUser,
   updatePreferences,
   getPreferences,
@@ -34,6 +37,10 @@ const { getMe, updatePassword } = require('../controllers/authController');
 router.get('/me', getMe);
 router.patch('/me/password', updatePassword); // Alias for updating password via users/me/password
 router.put('/me/password', updatePassword);   // Supporting both PUT and PATCH for password update
+
+// Avatar upload/remove for current user
+router.post('/me/avatar', upload.single('avatar'), uploadAvatar);
+router.delete('/me/avatar', removeAvatar);
 
 router.route('/:id')
   .get(getUserById)
