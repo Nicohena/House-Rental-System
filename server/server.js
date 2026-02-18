@@ -197,6 +197,45 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/recommendations', recommendationRoutes);
 
+// ============================================
+// GEOCODING PROXY (avoids browser CORS with Nominatim)
+// ============================================
+const axios = require('axios');
+
+app.get('/api/geocode/reverse', async (req, res) => {
+  const { lat, lon } = req.query;
+  if (!lat || !lon) {
+    return res.status(400).json({ success: false, message: 'lat and lon are required' });
+  }
+  try {
+    const response = await axios.get(
+      `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}`,
+      { headers: { 'User-Agent': 'SmartRentalSystem/1.0' } }
+    );
+    res.json(response.data);
+  } catch (err) {
+    logger.error('Reverse geocoding proxy error:', err.message);
+    res.status(502).json({ success: false, message: 'Geocoding service unavailable' });
+  }
+});
+
+app.get('/api/geocode/search', async (req, res) => {
+  const { q } = req.query;
+  if (!q) {
+    return res.status(400).json({ success: false, message: 'q (query) is required' });
+  }
+  try {
+    const response = await axios.get(
+      `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}`,
+      { headers: { 'User-Agent': 'SmartRentalSystem/1.0' } }
+    );
+    res.json(response.data);
+  } catch (err) {
+    logger.error('Forward geocoding proxy error:', err.message);
+    res.status(502).json({ success: false, message: 'Geocoding service unavailable' });
+  }
+});
+
 // 404 handler for undefined routes
 app.use((req, res, next) => {
   res.status(404).json({
