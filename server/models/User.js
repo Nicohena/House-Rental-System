@@ -111,6 +111,52 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: ''
   },
+  // User bio
+  bio: {
+    type: String,
+    trim: true,
+    maxlength: [500, 'Bio cannot exceed 500 characters'],
+    default: ''
+  },
+  // Saved homes / wishlist for tenants
+  savedHomes: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'House'
+  }],
+  // Lightweight in-app notifications
+  notifications: [{
+    type: {
+      type: String,
+      enum: ['saved_home', 'booking', 'system'],
+      default: 'system'
+    },
+    title: {
+      type: String,
+      required: true
+    },
+    message: {
+      type: String,
+      required: true
+    },
+    read: {
+      type: Boolean,
+      default: false
+    },
+    createdAt: {
+      type: Date,
+      default: Date.now
+    },
+    metadata: {
+      house: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'House'
+      },
+      booking: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'BookingRequest'
+      }
+    }
+  }],
   // Last login timestamp
   lastLogin: {
     type: Date
@@ -186,6 +232,7 @@ userSchema.methods.getPublicProfile = function() {
     rating: this.rating,
     language: this.language,
     avatar: this.avatar,
+    bio: this.bio,
     createdAt: this.createdAt
   };
 };

@@ -46,7 +46,7 @@ const chatMessageSchema = new mongoose.Schema({
   // Message type
   messageType: {
     type: String,
-    enum: ['text', 'image', 'file', 'system'],
+    enum: ['text', 'image', 'audio', 'file', 'system'],
     default: 'text'
   },
   // Attachment URL (for image/file messages)
