@@ -40,7 +40,8 @@ const ratingSchema = new mongoose.Schema({
 const locationSchema = new mongoose.Schema({
   address: {
     type: String,
-    required: [true, 'Please provide an address']
+    required: [true, 'Please provide an address'],
+    default: ''
   },
   city: {
     type: String,
@@ -52,7 +53,7 @@ const locationSchema = new mongoose.Schema({
   },
   zip: {
     type: String,
-    required: [true, 'Please provide a zip code']
+    default: ''
   },
   country: {
     type: String,
