@@ -49,7 +49,7 @@ const uploadAvatar = asyncHandler(async (req, res) => {
     throw new ApiError('Please upload an image file', 400);
   }
 
-  const avatarPath = `/uploads/${req.file.filename}`;
+  const avatarPath = req.file.path;
   
   const user = await User.findByIdAndUpdate(
     req.user._id,

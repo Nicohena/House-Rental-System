@@ -1,31 +1,17 @@
 const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
 const { ApiError } = require('../middlewares/errorHandler');
-
-// Configure storage
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    const uploadDir = path.join(__dirname, '../uploads');
-    // Ensure directory exists
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
-    cb(null, uploadDir);
-  },
-  filename: function (req, file, cb) {
-    // Generate unique filename: fieldname-timestamp-random.ext
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
-  }
-});
+const { storage } = require('../config/cloudinary');
 
 // File filter
 const fileFilter = (req, file, cb) => {
-  if (file.mimetype.startsWith('image/') || file.mimetype.startsWith('audio/')) {
+  if (
+    file.mimetype.startsWith('image/') || 
+    file.mimetype.startsWith('audio/') || 
+    file.mimetype.startsWith('video/')
+  ) {
     cb(null, true);
   } else {
-    cb(new ApiError('Invalid file type! Please upload images or audio files.', 400), false);
+    cb(new ApiError('Invalid file type! Please upload images, audio, or video files.', 400), false);
   }
 };
 
@@ -33,7 +19,7 @@ const upload = multer({
   storage: storage,
   fileFilter: fileFilter,
   limits: {
-    fileSize: 5 * 1024 * 1024 // 5MB limit
+    fileSize: 10 * 1024 * 1024 // Increased to 10MB for voice messages
   }
 });
 
@@ -48,13 +34,8 @@ const uploadImages = (req, res) => {
   }
 
   const fileUrls = req.files.map(file => {
-    // Construct URL based on server configuration
-    // In production, this might be a full URL. For now, relative path.
-    // The client will need to prepend the server URL if needed, 
-    // or we return the full URL if we know the host.
-    
-    // Assuming relative path for simplicity, handled by client or static serve
-    return `/uploads/${file.filename}`;
+    // konstrukt URL based on Cloudinary response
+    return file.path; // cloudinary-storage-multer puts the URL in file.path
   });
 
   res.status(200).json({
