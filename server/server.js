@@ -213,12 +213,22 @@ app.get('/api/geocode/reverse', async (req, res) => {
   try {
     const response = await axios.get(
       `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}`,
-      { headers: { 'User-Agent': 'SmartRentalSystem/1.0' } }
+      { 
+        headers: { 'User-Agent': 'SmartRentalSystem/1.0' },
+        timeout: 5000 // 5 second timeout
+      }
     );
     res.json(response.data);
   } catch (err) {
-    logger.error('Reverse geocoding proxy error:', err.message);
-    res.status(502).json({ success: false, message: 'Geocoding service unavailable' });
+    logger.error('Reverse geocoding proxy error:', {
+      message: err.message,
+      stack: err.stack,
+      response: err.response ? {
+        status: err.response.status,
+        data: err.response.data
+      } : 'No response from Nominatim'
+    });
+    res.status(502).json({ success: false, message: 'Geocoding service unavailable or timed out' });
   }
 });
 
@@ -230,12 +240,22 @@ app.get('/api/geocode/search', async (req, res) => {
   try {
     const response = await axios.get(
       `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}`,
-      { headers: { 'User-Agent': 'SmartRentalSystem/1.0' } }
+      { 
+        headers: { 'User-Agent': 'SmartRentalSystem/1.0' },
+        timeout: 5000 // 5 second timeout
+      }
     );
     res.json(response.data);
   } catch (err) {
-    logger.error('Forward geocoding proxy error:', err.message);
-    res.status(502).json({ success: false, message: 'Geocoding service unavailable' });
+    logger.error('Forward geocoding proxy error:', {
+      message: err.message,
+      stack: err.stack,
+      response: err.response ? {
+        status: err.response.status,
+        data: err.response.data
+      } : 'No response from Nominatim'
+    });
+    res.status(502).json({ success: false, message: 'Geocoding service unavailable or timed out' });
   }
 });
 
