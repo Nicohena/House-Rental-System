@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import {
   Search,
   Heart,
@@ -13,6 +13,7 @@ import {
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import { getImageUrl } from "../../utils/imageUtils";
+import chatService from "../../api/chatService";
 
 const NavItem = ({ icon: Icon, label, active = false, count, onClick }) => (
   <button
@@ -30,7 +31,7 @@ const NavItem = ({ icon: Icon, label, active = false, count, onClick }) => (
       />
       <span className="font-semibold text-sm">{label}</span>
     </div>
-    {count && (
+    {count > 0 && (
       <span
         className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
           active ? "bg-white/20 text-white" : "bg-red-500 text-white"
@@ -46,11 +47,28 @@ export const Sidebar = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, logout } = useAuth();
+  const [unreadCount, setUnreadCount] = useState(0);
 
   const handleLogout = () => {
     logout();
     navigate("/");
   };
+
+  useEffect(() => {
+    const fetchUnread = async () => {
+      if (!user) return;
+      try {
+        const data = await chatService.getUnreadCount();
+        setUnreadCount(data.data?.count || data.count || 0);
+      } catch (err) {
+        // Silently fail — badge just won't show
+      }
+    };
+    fetchUnread();
+    // Refresh every 30 seconds
+    const interval = setInterval(fetchUnread, 30000);
+    return () => clearInterval(interval);
+  }, [user]);
 
   return (
     <aside className="w-64 border-r border-slate-200 h-screen flex flex-col bg-white sticky top-0">
@@ -108,7 +126,7 @@ export const Sidebar = () => {
                   label="Messages"
                   active={location.pathname === "/messages"}
                   onClick={() => navigate("/messages")}
-                  count={3}
+                  count={unreadCount}
                 />
                 <NavItem
                   icon={CreditCard}
@@ -156,7 +174,7 @@ export const Sidebar = () => {
                   label="Messages"
                   active={location.pathname === "/messages"}
                   onClick={() => navigate("/messages")}
-                  count={3}
+                  count={unreadCount}
                 />
               </div>
             </div>
