@@ -1,29 +1,20 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { useAuth } from "../../context/AuthContext";
-import userService from "../../api/userService";
 import Navbar from "../../components/layout/Navbar";
-import { useNavigate } from "react-router-dom";
-import { User, Shield, CreditCard, Bell, History } from "lucide-react";
+import { User, Shield, Bell } from "lucide-react";
 import GeneralProfile from "../../components/settings/GeneralProfile";
 import SecuritySettings from "../../components/settings/SecuritySettings";
-import PaymentSettings from "../../components/settings/PaymentSettings";
 import PreferencesSettings from "../../components/settings/PreferencesSettings";
-import BookingHistorySettings from "../../components/settings/BookingHistorySettings";
 import "../user/Settings.css";
 
 const Profile = () => {
-  const { user, setUser, logout } = useAuth();
-  const navigate = useNavigate();
+  const { user } = useAuth();
   const [activeTab, setActiveTab] = useState("general");
-  const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState({ type: "", text: "" });
 
   const tabs = [
     { id: "general", label: "General Profile", icon: User },
     { id: "security", label: "Security", icon: Shield },
-    { id: "payments", label: "Payments", icon: CreditCard },
-    { id: "notifications", label: "Notifications", icon: Bell },
-    { id: "history", label: "Booking History", icon: History },
+    { id: "preferences", label: "Preferences", icon: Bell },
   ];
 
   const renderContent = () => {
@@ -32,12 +23,8 @@ const Profile = () => {
         return <GeneralProfile />;
       case "security":
         return <SecuritySettings />;
-      case "payments":
-        return <PaymentSettings />;
-      case "notifications":
+      case "preferences":
         return <PreferencesSettings />;
-      case "history":
-        return <BookingHistorySettings />;
       default:
         return <GeneralProfile />;
     }
@@ -50,14 +37,6 @@ const Profile = () => {
         <h1 className="text-3xl font-bold text-gray-900 mb-8">
           Account Settings
         </h1>
-
-        {message.text && (
-          <div
-            className={`mb-6 p-4 rounded-lg ${message.type === "success" ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}
-          >
-            {message.text}
-          </div>
-        )}
 
         <div className="flex flex-col lg:flex-row gap-6">
           {/* Sidebar */}

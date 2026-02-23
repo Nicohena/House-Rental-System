@@ -235,7 +235,6 @@ const DetailsPage = () => {
         houseId: id,
         startDate: new Date(startDate),
         endDate: new Date(endDate),
-        totalAmount: totalPrice + 350,
       };
 
       const response = await bookingService.createBooking(bookingData);
@@ -247,7 +246,9 @@ const DetailsPage = () => {
       // setCurrentBooking(response.data.booking);
       // setShowPayment(true);
     } catch (err) {
-      alert(err.response?.data?.message || "Failed to create booking");
+      const errorMsg =
+        err.response?.data?.message || "Failed to create booking";
+      toast.error(errorMsg);
     } finally {
       setBookingLoading(false);
     }
