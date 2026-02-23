@@ -214,21 +214,25 @@ app.get('/api/geocode/reverse', async (req, res) => {
     const response = await axios.get(
       `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}`,
       { 
-        headers: { 'User-Agent': 'SmartRentalSystem/1.0' },
-        timeout: 5000 // 5 second timeout
+        headers: { 
+          'User-Agent': 'SmartRentalSystem/1.0 (contact@smartrent.com)',
+          'Accept-Language': 'en'
+        },
+        timeout: 10000
       }
     );
     res.json(response.data);
   } catch (err) {
     logger.error('Reverse geocoding proxy error:', {
       message: err.message,
-      stack: err.stack,
+      code: err.code,
       response: err.response ? {
         status: err.response.status,
         data: err.response.data
       } : 'No response from Nominatim'
     });
-    res.status(502).json({ success: false, message: 'Geocoding service unavailable or timed out' });
+    const status = err.code === 'ECONNABORTED' ? 504 : 502;
+    res.status(status).json({ success: false, message: err.code === 'ECONNABORTED' ? 'Geocoding request timed out. Please try again.' : 'Geocoding service unavailable' });
   }
 });
 
@@ -239,23 +243,27 @@ app.get('/api/geocode/search', async (req, res) => {
   }
   try {
     const response = await axios.get(
-      `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}`,
+      `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=5`,
       { 
-        headers: { 'User-Agent': 'SmartRentalSystem/1.0' },
-        timeout: 5000 // 5 second timeout
+        headers: { 
+          'User-Agent': 'SmartRentalSystem/1.0 (contact@smartrent.com)',
+          'Accept-Language': 'en'
+        },
+        timeout: 10000
       }
     );
     res.json(response.data);
   } catch (err) {
     logger.error('Forward geocoding proxy error:', {
       message: err.message,
-      stack: err.stack,
+      code: err.code,
       response: err.response ? {
         status: err.response.status,
         data: err.response.data
       } : 'No response from Nominatim'
     });
-    res.status(502).json({ success: false, message: 'Geocoding service unavailable or timed out' });
+    const status = err.code === 'ECONNABORTED' ? 504 : 502;
+    res.status(status).json({ success: false, message: err.code === 'ECONNABORTED' ? 'Geocoding request timed out. Please try again.' : 'Geocoding service unavailable' });
   }
 });
 

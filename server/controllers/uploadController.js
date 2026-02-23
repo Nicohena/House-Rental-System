@@ -1,6 +1,7 @@
 const multer = require('multer');
 const { ApiError } = require('../middlewares/errorHandler');
 const { storage } = require('../config/cloudinary');
+const logger = require('../utils/logger');
 
 // File filter
 const fileFilter = (req, file, cb) => {
@@ -29,13 +30,16 @@ const upload = multer({
  * @access  Private
  */
 const uploadImages = (req, res) => {
+  logger.info(`Received ${req.files ? req.files.length : 0} files for upload`);
+  
   if (!req.files || req.files.length === 0) {
+    logger.warn('Upload attempt with no files');
     throw new ApiError('No files uploaded', 400);
   }
 
   const fileUrls = req.files.map(file => {
-    // konstrukt URL based on Cloudinary response
-    return file.path; // cloudinary-storage-multer puts the URL in file.path
+    logger.info(`File uploaded to Cloudinary: ${file.path}`);
+    return file.path;
   });
 
   res.status(200).json({
