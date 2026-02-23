@@ -21,7 +21,9 @@ const NotificationsPage = () => {
         setLoading(true);
         const response = await userService.getNotifications(user.id);
         const list =
-          response.data?.notifications || response.data?.data?.notifications || [];
+          response.data?.notifications ||
+          response.data?.data?.notifications ||
+          [];
         setNotifications(list);
         setError(null);
       } catch (err) {
@@ -52,6 +54,18 @@ const NotificationsPage = () => {
       );
     } finally {
       setMarkingAll(false);
+    }
+  };
+
+  const handleMarkOneRead = async (notificationId) => {
+    if (!user) return;
+    try {
+      setNotifications((prev) =>
+        prev.map((n) => (n._id === notificationId ? { ...n, read: true } : n)),
+      );
+      await userService.markNotificationRead(user.id, notificationId);
+    } catch (err) {
+      console.error("Failed to mark notification as read", err);
     }
   };
 
@@ -107,18 +121,22 @@ const NotificationsPage = () => {
             {notifications.map((n) => (
               <div
                 key={n._id}
-                className={`px-6 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 ${
-                  !n.read ? "bg-slate-50" : ""
+                onClick={() => !n.read && handleMarkOneRead(n._id)}
+                className={`px-6 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 transition-colors ${
+                  !n.read ? "bg-slate-50 cursor-pointer hover:bg-slate-100" : ""
                 }`}
               >
-                <div>
-                  <p className="font-semibold text-slate-900">{n.title}</p>
-                  <p className="text-sm text-slate-600 mt-1">{n.message}</p>
+                <div className="flex items-start gap-3">
+                  {!n.read && (
+                    <div className="w-2 h-2 rounded-full bg-primary mt-2 flex-shrink-0" />
+                  )}
+                  <div>
+                    <p className="font-semibold text-slate-900">{n.title}</p>
+                    <p className="text-sm text-slate-600 mt-1">{n.message}</p>
+                  </div>
                 </div>
                 <div className="text-right text-xs text-slate-400 whitespace-nowrap">
-                  {n.createdAt
-                    ? new Date(n.createdAt).toLocaleString()
-                    : ""}
+                  {n.createdAt ? new Date(n.createdAt).toLocaleString() : ""}
                 </div>
               </div>
             ))}
@@ -130,4 +148,3 @@ const NotificationsPage = () => {
 };
 
 export default NotificationsPage;
-
