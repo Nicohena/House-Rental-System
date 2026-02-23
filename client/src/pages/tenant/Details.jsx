@@ -27,6 +27,8 @@ import { houseService } from "../../api/houseService";
 import { useAuth } from "../../context/AuthContext";
 import bookingService from "../../api/bookingService";
 import chatService from "../../api/chatService";
+import recommendationService from "../../api/recommendationService";
+import { HouseCard } from "../../components/pieces/HouseCard";
 import PaymentModal from "../../components/payment/PaymentModal";
 import userService from "../../api/userService";
 
@@ -126,6 +128,7 @@ const DetailsPage = () => {
   const [currentBooking, setCurrentBooking] = useState(null);
   const [isSaved, setIsSaved] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [similarHouses, setSimilarHouses] = useState([]);
 
   // Rating states
   const [ratingScore, setRatingScore] = useState(0);
@@ -177,6 +180,20 @@ const DetailsPage = () => {
     };
 
     fetchDetails();
+  }, [id]);
+
+  // Fetch similar properties
+  useEffect(() => {
+    const fetchSimilar = async () => {
+      if (!id) return;
+      try {
+        const response = await recommendationService.getSimilarHouses(id);
+        setSimilarHouses(response.data?.houses || response.data || []);
+      } catch (err) {
+        // Silently fail — section just won't show
+      }
+    };
+    fetchSimilar();
   }, [id]);
 
   // Check if this house is already saved when user or data changes
@@ -699,6 +716,35 @@ const DetailsPage = () => {
             />
           </div>
         </div>
+
+        {/* Similar Properties */}
+        {similarHouses.length > 0 && (
+          <div className="mt-16 mb-12">
+            <h2 className="text-2xl font-black text-slate-900 mb-8">
+              Similar Properties
+            </h2>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+              {similarHouses.slice(0, 3).map((h) => (
+                <HouseCard
+                  key={h._id}
+                  house={{
+                    id: h._id,
+                    title: h.title,
+                    location: `${h.location?.city || ""}, ${h.location?.state || ""}`,
+                    price: h.price,
+                    rating: h.averageRating || 0,
+                    beds: h.rooms?.bedrooms || 0,
+                    sqft: h.size || 0,
+                    verified: h.verified?.status,
+                    match: h.matchScore,
+                    isFair: h.price < 5000,
+                    image: h.images?.[0]?.url || h.images?.[0],
+                  }}
+                />
+              ))}
+            </div>
+          </div>
+        )}
       </main>
 
       {showPayment && (
