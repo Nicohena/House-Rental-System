@@ -1,11 +1,9 @@
 import React, { useState } from "react";
-import { User, Shield, CreditCard, Bell, History } from "lucide-react";
+import { User, Shield, Bell } from "lucide-react";
 import Navbar from "../../components/layout/Navbar";
 import GeneralProfile from "../../components/settings/GeneralProfile";
 import SecuritySettings from "../../components/settings/SecuritySettings";
-import PaymentSettings from "../../components/settings/PaymentSettings";
 import PreferencesSettings from "../../components/settings/PreferencesSettings";
-import BookingHistorySettings from "../../components/settings/BookingHistorySettings";
 import "./Settings.css";
 
 const Settings = () => {
@@ -14,9 +12,7 @@ const Settings = () => {
   const tabs = [
     { id: "general", label: "General Profile", icon: User },
     { id: "security", label: "Security", icon: Shield },
-    { id: "payments", label: "Payments", icon: CreditCard },
-    { id: "notifications", label: "Notifications", icon: Bell },
-    { id: "history", label: "Booking History", icon: History },
+    { id: "preferences", label: "Preferences", icon: Bell },
   ];
 
   const renderContent = () => {
@@ -25,12 +21,8 @@ const Settings = () => {
         return <GeneralProfile />;
       case "security":
         return <SecuritySettings />;
-      case "payments":
-        return <PaymentSettings />;
-      case "notifications":
+      case "preferences":
         return <PreferencesSettings />;
-      case "history":
-        return <BookingHistorySettings />;
       default:
         return <GeneralProfile />;
     }
