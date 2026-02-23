@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import chatService from "../../api/chatService";
 import socket from "../../utils/socket";
+import { getImageUrl } from "../../utils/imageUtils";
 
 const ChatList = ({
   onSelectConversation,
