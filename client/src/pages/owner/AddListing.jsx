@@ -42,6 +42,8 @@ import L from "leaflet";
 import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
 import markerIcon from "leaflet/dist/images/marker-icon.png";
 import markerShadow from "leaflet/dist/images/marker-shadow.png";
+import { getImageUrl } from "../../utils/imageUtils";
+
 
 // Fix for default marker icon issues in React/Leaflet
 delete L.Icon.Default.prototype._getIconUrl;
@@ -178,18 +180,25 @@ const AddListing = () => {
     });
 
     try {
+      setLoading(true);
+      console.log("Starting image upload for", files.length, "files");
       const response = await houseService.uploadImages(uploadData);
-      const uploadedPaths = response.data.data || [];
+      console.log("Upload response:", response.data);
 
-      const newImages = uploadedPaths;
+      const uploadedPaths = response.data.data || [];
 
       setFormData((prev) => ({
         ...prev,
-        images: [...prev.images, ...newImages],
+        images: [...prev.images, ...uploadedPaths],
       }));
     } catch (error) {
       console.error("Image upload failed:", error);
-      alert("Failed to upload images. Check console for details.");
+      alert(
+        "Image upload failed: " +
+          (error.response?.data?.message || error.message || "Unknown error"),
+      );
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -549,7 +558,7 @@ const AddListing = () => {
                         height: "100%",
                         objectFit: "cover",
                       }}
-                      src={img}
+                      src={getImageUrl(img)}
                     />
                     <div
                       style={{
