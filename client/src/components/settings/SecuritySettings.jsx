@@ -1,16 +1,22 @@
 import React, { useState } from "react";
-import { Eye, EyeOff, Shield, Smartphone } from "lucide-react";
+import { Eye, EyeOff, Shield, Trash2 } from "lucide-react";
+import { useAuth } from "../../context/AuthContext";
 import userService from "../../api/userService";
+import { useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
 
 const SecuritySettings = () => {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [showPasswords, setShowPasswords] = useState({
     current: false,
     new: false,
     confirm: false,
   });
-
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
 
   const [passwordData, setPasswordData] = useState({
     currentPassword: "",
@@ -88,6 +94,27 @@ const SecuritySettings = () => {
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    if (deleteConfirmText !== "DELETE") {
+      toast.error('Please type "DELETE" to confirm');
+      return;
+    }
+
+    try {
+      setDeleteLoading(true);
+      const userId = user?.id || user?._id;
+      await userService.deleteUser(userId);
+      toast.success("Account deleted successfully");
+      logout();
+      navigate("/");
+    } catch (error) {
+      console.error("Account deletion error:", error);
+      toast.error(error.response?.data?.message || "Failed to delete account");
+    } finally {
+      setDeleteLoading(false);
     }
   };
 
@@ -222,10 +249,63 @@ const SecuritySettings = () => {
           </div>
         </form>
       </div>
+
+      {/* Delete Account Section */}
+      <div>
+        <h3 className="text-lg font-semibold text-red-600 mb-2 flex items-center gap-2">
+          <Trash2 className="w-5 h-5" />
+          Delete Account
+        </h3>
+        <p className="text-sm text-gray-600 mb-4">
+          Permanently delete your account and all associated data. This action
+          cannot be undone.
+        </p>
+
+        {!showDeleteConfirm ? (
+          <button
+            type="button"
+            onClick={() => setShowDeleteConfirm(true)}
+            className="px-4 py-2 text-sm font-medium text-red-600 border border-red-300 rounded-lg hover:bg-red-50 transition-colors"
+          >
+            Delete My Account
+          </button>
+        ) : (
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4 max-w-md">
+            <p className="text-sm text-red-800 font-medium mb-3">
+              Type <strong>DELETE</strong> to confirm account deletion:
+            </p>
+            <input
+              type="text"
+              value={deleteConfirmText}
+              onChange={(e) => setDeleteConfirmText(e.target.value)}
+              placeholder="Type DELETE"
+              className="settings-form-input mb-3 border-red-300 focus:border-red-500 focus:ring-red-500"
+            />
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={handleDeleteAccount}
+                disabled={deleteLoading || deleteConfirmText !== "DELETE"}
+                className="px-4 py-2 text-sm font-bold text-white bg-red-600 rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              >
+                {deleteLoading ? "Deleting..." : "Permanently Delete"}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowDeleteConfirm(false);
+                  setDeleteConfirmText("");
+                }}
+                className="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
-  
-  
 };
 
 export default SecuritySettings;
