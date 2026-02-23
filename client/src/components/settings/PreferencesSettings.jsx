@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Bell, Mail, Moon } from "lucide-react";
+import { Bell, Mail } from "lucide-react";
 import { useAuth } from "../../context/AuthContext";
 import userService from "../../api/userService";
 import toast from "react-hot-toast";
@@ -10,7 +10,6 @@ const PreferencesSettings = () => {
   const [preferences, setPreferences] = useState({
     emailNotifications: true,
     marketingEmails: false,
-    darkMode: false,
   });
 
   const handleToggle = async (key) => {
@@ -63,12 +62,6 @@ const PreferencesSettings = () => {
       icon: Mail,
       title: "Marketing Emails",
       description: "Receive offers and new listing alerts.",
-    },
-    {
-      key: "darkMode",
-      icon: Moon,
-      title: "Dark Mode",
-      description: "Switch between light and dark themes.",
     },
   ];
 
