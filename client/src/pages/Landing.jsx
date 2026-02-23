@@ -295,73 +295,30 @@ const LandingPage = () => {
       </section>
 
       {/* Footer */}
-      <footer className="bg-white border-t border-slate-100 pt-24 pb-12">
-        <div className="max-w-7xl mx-auto px-8 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-12 mb-24">
-          <div className="col-span-2">
+      <footer className="bg-white border-t border-slate-100 pt-16 pb-12">
+        <div className="max-w-7xl mx-auto px-8">
+          <div className="flex flex-col md:flex-row justify-between items-center gap-6 mb-8">
             <div
               onClick={() => navigate("/")}
-              className="flex items-center gap-2 text-primary mb-6 cursor-pointer"
+              className="flex items-center gap-2 text-primary cursor-pointer"
             >
               <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
                 <div className="w-6 h-6 bg-white rounded-sm" />
               </div>
-              <span className="text-xl font-black italic tracking-tighter uppercase font-black">
+              <span className="text-xl font-black italic tracking-tighter uppercase">
                 SmartRent
               </span>
             </div>
-            <p className="text-slate-500 text-sm max-w-xs leading-relaxed">
+            <p className="text-slate-500 text-sm max-w-xs leading-relaxed text-center md:text-right">
               The smartest way to rent. Verified homes, fair prices, and happy
-              tenants. Join the future of living today.
+              tenants.
             </p>
           </div>
-          <div>
-            <h4 className="font-bold text-slate-900 mb-6">Company</h4>
-            <ul className="space-y-4 text-sm text-slate-500 font-medium">
-              <li>
-                <button
-                  onClick={() => navigate("/")}
-                  className="hover:text-primary"
-                >
-                  About Us
-                </button>
-              </li>
-              <li>
-                <button className="hover:text-primary">Careers</button>
-              </li>
-              <li>
-                <button className="hover:text-primary">Blog</button>
-              </li>
-            </ul>
+          <div className="pt-8 border-t border-slate-100 text-center">
+            <p className="text-xs text-slate-400 font-medium">
+              © 2026 SmartRent Inc. All rights reserved.
+            </p>
           </div>
-          <div>
-            <h4 className="font-bold text-slate-900 mb-6">Support</h4>
-            <ul className="space-y-4 text-sm text-slate-500 font-medium">
-              <li>
-                <button className="hover:text-primary">Help Center</button>
-              </li>
-              <li>
-                <button className="hover:text-primary">
-                  Safety Information
-                </button>
-              </li>
-            </ul>
-          </div>
-          <div>
-            <h4 className="font-bold text-slate-900 mb-6">Legal</h4>
-            <ul className="space-y-4 text-sm text-slate-500 font-medium">
-              <li>
-                <button className="hover:text-primary">Terms of Service</button>
-              </li>
-              <li>
-                <button className="hover:text-primary">Privacy Policy</button>
-              </li>
-            </ul>
-          </div>
-        </div>
-        <div className="max-w-7xl mx-auto px-8 pt-12 border-t border-slate-100 flex flex-col md:flex-row justify-between items-center gap-6">
-          <p className="text-xs text-slate-400 font-medium">
-            © 2026 SmartRent Inc. All rights reserved.
-          </p>
         </div>
       </footer>
     </div>
