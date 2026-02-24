@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import {
   Star,
   Share,
@@ -6,14 +6,7 @@ import {
   MapPin,
   ShieldCheck,
   Calendar,
-  Users,
   Wifi,
-  Monitor,
-  Briefcase,
-  Wind,
-  WashingMachine,
-  Coffee,
-  MessageSquare,
   ChevronLeft,
   Loader2,
 } from "lucide-react";
@@ -26,25 +19,39 @@ import { useNavigate, useParams } from "react-router-dom";
 import { houseService } from "../../api/houseService";
 import { useAuth } from "../../context/AuthContext";
 import bookingService from "../../api/bookingService";
-import chatService from "../../api/chatService";
 import recommendationService from "../../api/recommendationService";
 import { HouseCard } from "../../components/pieces/HouseCard";
 import PaymentModal from "../../components/payment/PaymentModal";
 import userService from "../../api/userService";
 
+// Extracted sub-components
+import {
+  PhotoGrid,
+  PropertyDetails,
+  HouseRules,
+  HostSection,
+  ReviewsSection,
+  PropertyMapModal,
+} from "../../components/details";
+
+// ─────────────────────────────────────────────────────────────
+// BookingWidget (kept inline — tightly coupled to booking state)
+// ─────────────────────────────────────────────────────────────
 const BookingWidget = ({
   price,
   rating,
   reviewsCount,
   onBook,
   loading,
+  disabled,
+  disabledReason,
   startDate,
   setStartDate,
   endDate,
   setEndDate,
   totalPrice,
 }) => (
-  <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xl sticky top-28 h-fit">
+  <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xl top-28 h-fit">
     <div className="flex justify-between items-center mb-6">
       <div className="flex items-baseline gap-1">
         <span className="text-2xl font-black text-slate-900">ETB {price}</span>
@@ -86,11 +93,20 @@ const BookingWidget = ({
 
     <button
       onClick={onBook}
-      disabled={loading}
-      className="w-full py-4 bg-primary text-white font-bold rounded-2xl hover:bg-primary-dark transition-all shadow-lg shadow-primary/20 mb-6 disabled:opacity-50"
+      disabled={loading || disabled}
+      className="w-full py-4 bg-primary text-white font-bold rounded-2xl hover:bg-primary-dark transition-all shadow-lg shadow-primary/20 mb-2 disabled:opacity-50"
     >
-      {loading ? "Processing..." : "Request Booking"}
+      {loading
+        ? "Processing..."
+        : disabled
+          ? disabledReason || "Unavailable"
+          : "Request Booking"}
     </button>
+    {disabled && disabledReason && (
+      <p className="text-xs text-center text-amber-600 font-medium mb-4">
+        {disabledReason}
+      </p>
+    )}
     <p className="text-xs text-center text-slate-400 italic mb-6">
       You won't be charged yet
     </p>
@@ -116,6 +132,9 @@ const BookingWidget = ({
   </div>
 );
 
+// ─────────────────────────────────────────────────────────────
+// DetailsPage — main component
+// ─────────────────────────────────────────────────────────────
 const DetailsPage = () => {
   const navigate = useNavigate();
   const { id } = useParams();
@@ -129,6 +148,7 @@ const DetailsPage = () => {
   const [isSaved, setIsSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [similarHouses, setSimilarHouses] = useState([]);
+  const [showMap, setShowMap] = useState(false);
 
   // Rating states
   const [ratingScore, setRatingScore] = useState(0);
@@ -147,7 +167,7 @@ const DetailsPage = () => {
   });
   const [totalPrice, setTotalPrice] = useState(0);
 
-  // Handle dynamic price calculation
+  // ── Fix #5: Improved price calc with dynamic month length ──
   useEffect(() => {
     if (!data?.house?.price || !startDate || !endDate) return;
 
@@ -156,14 +176,20 @@ const DetailsPage = () => {
 
     if (end > start) {
       const diffDays = Math.ceil((end - start) / (1000 * 60 * 60 * 24));
-      // Daily rate from monthly price
-      const calculated = Math.round((data.house.price / 30) * diffDays);
+      const daysInMonth = new Date(
+        start.getFullYear(),
+        start.getMonth() + 1,
+        0,
+      ).getDate();
+      const dailyRate = data.house.price / daysInMonth;
+      const calculated = Math.round(dailyRate * diffDays);
       setTotalPrice(calculated);
     } else {
       setTotalPrice(0);
     }
   }, [startDate, endDate, data?.house?.price]);
 
+  // Fetch house details
   useEffect(() => {
     const fetchDetails = async () => {
       setLoading(true);
@@ -188,15 +214,16 @@ const DetailsPage = () => {
       if (!id) return;
       try {
         const response = await recommendationService.getSimilarHouses(id);
-        setSimilarHouses(response.data?.houses || response.data || []);
+        // Correctly access response.data.similar from backend
+        setSimilarHouses(response.data?.similar || response.data?.houses || []);
       } catch (err) {
-        // Silently fail — section just won't show
+        setSimilarHouses([]);
       }
     };
     fetchSimilar();
   }, [id]);
 
-  // Check if this house is already saved when user or data changes
+  // ── Fix #2: Optimized dependency — only re-run when house ID changes ──
   useEffect(() => {
     const checkSaved = async () => {
       if (!user || !data?.house?._id) {
@@ -215,21 +242,66 @@ const DetailsPage = () => {
     };
 
     checkSaved();
-  }, [user, data]);
+  }, [user, data?.house?._id]);
 
+  // ── Fix #6: Detect if user is the owner ──
+  const isOwner = user?.id === data?.house?.ownerId?._id;
+
+  // ── Fix #9: Memoize similar houses slice ──
+  const displayedSimilarHouses = useMemo(
+    () => (Array.isArray(similarHouses) ? similarHouses.slice(0, 3) : []),
+    [similarHouses],
+  );
+
+  // ── Fixes #1, #3, #4: Cleaned handleBookingRequest ──
   const handleBookingRequest = async () => {
     if (!user) {
       alert("Please login to book a house");
       return;
     }
 
-    try {
-      setBookingLoading(true);
+    if (isOwner) {
+      alert("You cannot book your own property");
+      return;
+    }
 
-      if (new Date(endDate) <= new Date(startDate)) {
-        alert("Check-out date must be after check-in date");
+    // Fix #4: Validate dates exist
+    if (!startDate || !endDate) {
+      alert("Please select both check-in and check-out dates");
+      return;
+    }
+
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // Fix #4: Prevent past start date
+    if (start < today) {
+      alert("Check-in date cannot be in the past");
+      return;
+    }
+
+    // Fix #4: Prevent invalid range
+    if (end <= start) {
+      alert("Check-out date must be after check-in date");
+      return;
+    }
+
+    // Fix #3: Minimum lease duration validation
+    if (data?.house?.minLeaseDuration) {
+      const diffMs = end - start;
+      const diffMonths = diffMs / (1000 * 60 * 60 * 24 * 30.44); // avg month
+      if (diffMonths < data.house.minLeaseDuration) {
+        alert(
+          `Minimum lease is ${data.house.minLeaseDuration} month${data.house.minLeaseDuration !== 1 ? "s" : ""}`,
+        );
         return;
       }
+    }
+
+    try {
+      setBookingLoading(true);
 
       const bookingData = {
         houseId: id,
@@ -237,18 +309,13 @@ const DetailsPage = () => {
         endDate: new Date(endDate),
       };
 
-      const response = await bookingService.createBooking(bookingData);
-      setBookingLoading(false);
-      toast.success(
-        "Booking request sent! You can pay once the owner approves.",
-      );
-      // Defer payment until owner approves
-      // setCurrentBooking(response.data.booking);
-      // setShowPayment(true);
+      await bookingService.createBooking(bookingData);
+      // Fix #1: Removed duplicate setBookingLoading(false) — only in finally
+      alert("Booking request sent! You can pay once the owner approves.");
     } catch (err) {
       const errorMsg =
         err.response?.data?.message || "Failed to create booking";
-      toast.error(errorMsg);
+      alert(errorMsg);
     } finally {
       setBookingLoading(false);
     }
@@ -260,7 +327,6 @@ const DetailsPage = () => {
       return;
     }
 
-    // Navigate to chat with pre-filled user details/context
     navigate("/messages", {
       state: {
         owner: data.house.ownerId,
@@ -313,7 +379,6 @@ const DetailsPage = () => {
         score: ratingScore,
         comment: ratingComment,
       });
-      // Update local data with the new rating
       setData((prev) => ({
         ...prev,
         house: {
@@ -343,6 +408,7 @@ const DetailsPage = () => {
     }
   };
 
+  // ── Loading / Error states ──
   if (loading)
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-4 bg-white">
@@ -366,8 +432,20 @@ const DetailsPage = () => {
 
   const { house, priceFairness, matchScore } = data;
 
+  // ── Fix #3 helper: Build full address string with optional chaining ──
+  const fullAddress = [
+    house.location?.address,
+    house.location?.city,
+    house.location?.state,
+    house.location?.zip,
+    house.location?.country,
+  ]
+    .filter(Boolean)
+    .join(", ");
+
   return (
     <div className="bg-white min-h-screen pb-20">
+      {/* ── Navigation Bar ── */}
       <nav className="max-w-7xl mx-auto px-8 h-20 flex items-center justify-between border-b border-slate-50">
         <button
           onClick={() => navigate(-1)}
@@ -384,7 +462,7 @@ const DetailsPage = () => {
               if (navigator.share) {
                 navigator
                   .share({
-                    title: data?.house?.title || "SmartRent Home",
+                    title: house?.title || "SmartRent Home",
                     text: "Check out this property on SmartRent",
                     url: window.location.href,
                   })
@@ -415,6 +493,7 @@ const DetailsPage = () => {
       </nav>
 
       <main className="max-w-7xl mx-auto px-8 pt-10">
+        {/* ── Title & Badges ── */}
         <div className="flex flex-col md:flex-row justify-between items-start gap-4 mb-8">
           <div>
             <h1 className="text-4xl font-black text-slate-900 tracking-tight mb-2">
@@ -428,12 +507,17 @@ const DetailsPage = () => {
                   ({house.ratings?.length || 0} reviews)
                 </span>
               </div>
-              <div className="flex items-center gap-1 text-slate-500 font-bold">
+              {/* ── Fix #7: Clickable address opens map modal ── */}
+              <button
+                type="button"
+                onClick={() => setShowMap(true)}
+                className="flex items-center gap-1 text-slate-500 font-bold hover:text-primary transition-colors group"
+              >
                 <MapPin size={14} />
-                <span className="underline">
-                  {house.location.city}, {house.location.state}
+                <span className="underline group-hover:text-primary">
+                  {fullAddress}
                 </span>
-              </div>
+              </button>
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -442,32 +526,12 @@ const DetailsPage = () => {
           </div>
         </div>
 
-        {/* Photo Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-4 grid-rows-2 gap-4 h-[500px] mb-12 rounded-[32px] overflow-hidden">
-          <div className="md:col-span-2 md:row-span-2">
-            <img
-              src={getImageUrl(
-                house.images?.[0]?.url ||
-                  house.images?.[0] ||
-                  "https://images.unsplash.com/photo-1560448204-e02f11c3d0e2?auto=format&fit=crop&q=80&w=1200",
-              )}
-              className="w-full h-full object-cover hover:opacity-90 transition-opacity cursor-pointer"
-              alt="Main"
-            />
-          </div>
-          {house.images?.slice(1, 5).map((img, idx) => (
-            <div key={idx} className="hidden md:block">
-              <img
-                src={getImageUrl(img.url || img)}
-                className="w-full h-full object-cover hover:opacity-90 transition-opacity cursor-pointer"
-                alt={`Small ${idx}`}
-              />
-            </div>
-          ))}
-        </div>
+        {/* ── Photo Grid ── */}
+        <PhotoGrid images={house.images} />
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-16">
           <div className="lg:col-span-2 space-y-12">
+            {/* ── Host Header ── */}
             <div className="flex justify-between items-center pb-8 border-b border-slate-100">
               <div>
                 <h2 className="text-2xl font-black text-slate-900 mb-2">
@@ -485,10 +549,12 @@ const DetailsPage = () => {
                       "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=100",
                   )}
                   alt="Host"
+                  className="w-full h-full object-cover"
                 />
               </div>
             </div>
 
+            {/* ── Highlights ── */}
             <div className="space-y-8">
               {house.verified?.status && (
                 <div className="flex gap-4">
@@ -524,15 +590,17 @@ const DetailsPage = () => {
               </div>
             </div>
 
+            {/* ── Description ── */}
             <div className="space-y-6 pt-12 border-t border-slate-100">
               <p className="text-slate-600 leading-relaxed font-medium">
                 {house.description}
               </p>
-              <button className="text-sm font-bold text-slate-900 underline">
-                Show more
-              </button>
             </div>
 
+            {/* ── Property Details (extracted) ── */}
+            <PropertyDetails house={house} />
+
+            {/* ── Amenities ── */}
             <div className="pt-12 border-t border-slate-100">
               <h3 className="text-xl font-black text-slate-900 mb-8">
                 What this place offers
@@ -548,160 +616,36 @@ const DetailsPage = () => {
                   </div>
                 ))}
               </div>
-              <button className="mt-10 px-8 py-3 border border-slate-900 rounded-xl font-bold text-sm hover:bg-slate-50 transition-colors">
-                Show all {house.amenities?.length} amenities
-              </button>
-            </div>
-
-            <div className="p-8 bg-slate-50 rounded-[32px] flex flex-col md:flex-row items-center justify-between gap-6">
-              <div className="flex items-center gap-4">
-                <div className="w-12 h-12 rounded-full overflow-hidden">
-                  <img
-                    src={getImageUrl(
-                      house.ownerId?.avatar ||
-                        "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=100",
-                    )}
-                    alt="Host"
-                  />
-                </div>
-                <div>
-                  <h4 className="font-bold text-slate-900">
-                    Hosted by {house.ownerId?.name}
-                  </h4>
-                  <p className="text-xs text-slate-500 font-medium">
-                    User Rating: {house.ownerId?.rating?.average || "New"}
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={handleStartChat}
-                className="px-8 py-3 bg-white border border-slate-200 rounded-xl font-bold text-sm flex items-center gap-2 hover:shadow-md transition-all"
-              >
-                <MessageSquare size={18} />
-                <span>Chat with {house.ownerId?.name}</span>
-              </button>
-            </div>
-
-            {/* Reviews & Ratings Section */}
-            <div className="pt-12 border-t border-slate-100">
-              <div className="flex items-center gap-3 mb-8">
-                <Star className="text-yellow-400 fill-yellow-400" size={24} />
-                <h3 className="text-xl font-black text-slate-900">
-                  {house.averageRating?.toFixed(1) || "New"} ·{" "}
-                  {house.ratings?.length || 0} review
-                  {house.ratings?.length !== 1 ? "s" : ""}
-                </h3>
-              </div>
-
-              {/* Existing Reviews */}
-              {house.ratings?.length > 0 && (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
-                  {house.ratings.map((review, idx) => (
-                    <div key={idx} className="bg-slate-50 rounded-2xl p-5">
-                      <div className="flex items-center gap-3 mb-3">
-                        <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-full flex items-center justify-center text-white font-bold text-sm">
-                          {review.tenantId?.name?.charAt(0)?.toUpperCase() ||
-                            "?"}
-                        </div>
-                        <div>
-                          <p className="font-bold text-slate-900 text-sm">
-                            {review.tenantId?.name || "Anonymous"}
-                          </p>
-                          <p className="text-xs text-slate-400">
-                            {new Date(review.createdAt).toLocaleDateString(
-                              "en-US",
-                              { month: "short", year: "numeric" },
-                            )}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex gap-0.5 mb-2">
-                        {[1, 2, 3, 4, 5].map((s) => (
-                          <Star
-                            key={s}
-                            size={14}
-                            className={
-                              s <= review.score
-                                ? "text-yellow-400 fill-yellow-400"
-                                : "text-slate-200"
-                            }
-                          />
-                        ))}
-                      </div>
-                      {review.comment && (
-                        <p className="text-sm text-slate-600 leading-relaxed">
-                          {review.comment}
-                        </p>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Submit Review Form */}
-              {user && user.role === "tenant" && (
-                <div className="bg-white border border-slate-200 rounded-2xl p-6">
-                  <h4 className="font-bold text-slate-900 mb-4">
-                    Leave a Review
-                  </h4>
-                  <div className="flex gap-1 mb-4">
-                    {[1, 2, 3, 4, 5].map((s) => (
-                      <button
-                        key={s}
-                        type="button"
-                        onClick={() => setRatingScore(s)}
-                        onMouseEnter={() => setRatingHover(s)}
-                        onMouseLeave={() => setRatingHover(0)}
-                        className="transition-transform hover:scale-110"
-                      >
-                        <Star
-                          size={28}
-                          className={
-                            s <= (ratingHover || ratingScore)
-                              ? "text-yellow-400 fill-yellow-400"
-                              : "text-slate-200"
-                          }
-                        />
-                      </button>
-                    ))}
-                    {ratingScore > 0 && (
-                      <span className="ml-2 text-sm text-slate-500 self-center font-medium">
-                        {ratingScore === 1
-                          ? "Poor"
-                          : ratingScore === 2
-                            ? "Fair"
-                            : ratingScore === 3
-                              ? "Good"
-                              : ratingScore === 4
-                                ? "Very Good"
-                                : "Excellent"}
-                      </span>
-                    )}
-                  </div>
-                  <textarea
-                    value={ratingComment}
-                    onChange={(e) => setRatingComment(e.target.value)}
-                    placeholder="Tell others about your experience (optional)..."
-                    rows={3}
-                    className="w-full border border-slate-200 rounded-xl p-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 resize-none mb-4"
-                  />
-                  <button
-                    onClick={handleSubmitRating}
-                    disabled={ratingLoading || ratingScore === 0}
-                    className="px-6 py-2.5 bg-slate-900 text-white rounded-xl font-bold text-sm hover:bg-slate-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                  >
-                    {ratingLoading ? (
-                      <Loader2 className="animate-spin" size={16} />
-                    ) : (
-                      <Star size={16} />
-                    )}
-                    Submit Review
-                  </button>
-                </div>
+              {house.amenities?.length > 6 && (
+                <button className="mt-10 px-8 py-3 border border-slate-900 rounded-xl font-bold text-sm hover:bg-slate-50 transition-colors">
+                  Show all {house.amenities?.length} amenities
+                </button>
               )}
             </div>
+
+            {/* ── House Rules (extracted) ── */}
+            <HouseRules rules={house.rules} />
+
+            {/* ── Host Section (extracted) ── */}
+            <HostSection owner={house.ownerId} onStartChat={handleStartChat} />
+
+            {/* ── Reviews Section (extracted) ── */}
+            <ReviewsSection
+              ratings={house.ratings}
+              averageRating={house.averageRating}
+              user={user}
+              ratingScore={ratingScore}
+              setRatingScore={setRatingScore}
+              ratingHover={ratingHover}
+              setRatingHover={setRatingHover}
+              ratingComment={ratingComment}
+              setRatingComment={setRatingComment}
+              ratingLoading={ratingLoading}
+              onSubmitRating={handleSubmitRating}
+            />
           </div>
 
+          {/* ── Booking Widget (sidebar) ── */}
           <div className="relative">
             <BookingWidget
               price={house.price}
@@ -709,6 +653,8 @@ const DetailsPage = () => {
               reviewsCount={house.ratings?.length}
               onBook={handleBookingRequest}
               loading={bookingLoading}
+              disabled={isOwner}
+              disabledReason={isOwner ? "You own this property" : null}
               startDate={startDate}
               setStartDate={setStartDate}
               endDate={endDate}
@@ -718,14 +664,14 @@ const DetailsPage = () => {
           </div>
         </div>
 
-        {/* Similar Properties */}
-        {similarHouses.length > 0 && (
+        {/* ── Similar Properties (memoized) ── */}
+        {displayedSimilarHouses.length > 0 && (
           <div className="mt-16 mb-12">
             <h2 className="text-2xl font-black text-slate-900 mb-8">
               Similar Properties
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-              {similarHouses.slice(0, 3).map((h) => (
+              {displayedSimilarHouses.map((h) => (
                 <HouseCard
                   key={h._id}
                   house={{
@@ -748,6 +694,14 @@ const DetailsPage = () => {
         )}
       </main>
 
+      {/* ── Property Map Modal ── */}
+      <PropertyMapModal
+        isOpen={showMap}
+        onClose={() => setShowMap(false)}
+        location={house.location}
+      />
+
+      {/* ── Payment Modal ── */}
       {showPayment && (
         <PaymentModal
           booking={currentBooking}
