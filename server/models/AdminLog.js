@@ -38,9 +38,12 @@ const adminLogSchema = new mongoose.Schema({
       'BOOKING_REJECTED',
       'BOOKING_CANCELLED',
       // Payment management
+      'PAYMENT_INITIATED',
       'PAYMENT_PROCESSED',
       'PAYMENT_REFUNDED',
       'PAYMENT_FAILED',
+      'PAYMENT_UPDATE',
+      'PAYMENT_CANCELLED',
       // System actions
       'SYSTEM_CONFIG_CHANGED',
       'REPORT_GENERATED',

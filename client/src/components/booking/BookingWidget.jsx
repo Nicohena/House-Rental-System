@@ -186,6 +186,7 @@ const BookingWidget = ({ house, user: propUser, onBookingSuccess }) => {
         <AnimatePresence>
           {hasOverlapError && (
             <motion.div
+              key="overlap-error"
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -10 }}
@@ -200,6 +201,7 @@ const BookingWidget = ({ house, user: propUser, onBookingSuccess }) => {
 
           {house.minLeaseDuration > 0 && (
             <motion.div
+              key="min-lease-info"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               className="flex items-center gap-2 text-primary p-2 bg-primary/5 rounded-xl border border-primary/10"

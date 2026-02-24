@@ -16,9 +16,17 @@
 const Payment = require('../models/Payment');
 const BookingRequest = require('../models/BookingRequest');
 const House = require('../models/House');
-const AdminLog = require('../models/AdminLog');
 const { asyncHandler, ApiError } = require('../middlewares/errorHandler');
 const { verifyPaymentWithChapa } = require('../middlewares/chapaMiddleware');
+const { PAYMENT_STATUS, logPaymentEvent } = require('../utils/paymentUtils');
+const fs = require('fs');
+
+// Helper for file logging
+const fileLog = (msg) => {
+  try {
+    fs.appendFileSync('/tmp/payment_debug.log', `${new Date().toISOString()} - ${msg}\n`);
+  } catch (err) {}
+};
 
 // Conditional Stripe import (may not be needed if using Chapa only)
 let stripe;
@@ -56,44 +64,67 @@ const initiatePayment = asyncHandler(async (req, res) => {
 
   // Get booking details
   const booking = await BookingRequest.findById(bookingId)
-    .populate('houseId', 'title price images');
+    .populate('houseId', 'title price images')
+    .populate('tenantId', 'name email phone')
+    .populate('ownerId', 'name email phone');
 
   if (!booking) {
+    fileLog(`[Payment Error] Booking not found: ${bookingId}`);
     throw new ApiError('Booking not found', 404);
   }
 
+  fileLog(`[Payment Info] Booking: ${booking._id}, Status: ${booking.status}, Tenant: ${booking.tenantId}`);
+
   // Verify booking belongs to user and is approved
-  if (booking.tenantId.toString() !== req.user._id.toString()) {
-    throw new ApiError('Not authorized', 403);
+  const tenantId = booking.tenantId._id ? booking.tenantId._id.toString() : booking.tenantId.toString();
+  const userId = req.user._id.toString();
+
+  if (tenantId !== userId) {
+    fileLog(`[Payment Error] Auth mismatch: ${tenantId} !== ${userId}`);
+    throw new ApiError('Not authorized to pay for this booking', 403);
   }
 
   if (booking.status !== 'approved') {
-    throw new ApiError('Booking must be approved before payment', 400);
+    fileLog(`[Payment Error] Status mismatch: ${booking.status} !== approved`);
+    throw new ApiError(`Booking must be approved (current: ${booking.status}) before payment`, 400);
   }
 
   if (booking.paymentStatus === 'paid') {
+    console.log(`[Payment Debug] Already paid: ${booking.paymentStatus}`);
     throw new ApiError('Booking has already been paid', 400);
   }
 
   // Calculate amounts
-  const rentAmount = booking.totalAmount;
+  const rentAmount = booking.totalAmount || 0;
+  if (rentAmount <= 0) {
+    console.log(`[Payment Debug] Invalid rent amount: ${rentAmount}`);
+    throw new ApiError('Invalid booking amount. Please contact support.', 400);
+  }
   const serviceFee = Math.round(rentAmount * 0.05); // 5% service fee
   const totalAmount = rentAmount + serviceFee;
 
+  console.log(`[Payment] Initiating ${paymentMethod} payment for booking ${bookingId}. Total: ${totalAmount}`);
+
   // Use Chapa for Ethiopian payments
   if (paymentMethod === 'chapa' || !stripe) {
-    return await initiateChapaPayment(req, res, booking, totalAmount, rentAmount, serviceFee, returnUrl, callbackUrl);
+    return await initiateChapaPayment({
+      req, res, booking, totalAmount, rentAmount, serviceFee, returnUrl, callbackUrl
+    });
   }
 
   // Fall back to Stripe for international payments
-  return await initiateStripePayment(req, res, booking, totalAmount, rentAmount, serviceFee);
+  return await initiateStripePayment({
+    req, res, booking, totalAmount, rentAmount, serviceFee
+  });
 });
 
 /**
  * Initiate Chapa payment (Ethiopian Payment Gateway)
  * Supports: telebirr, CBE Birr, E-Birr, M-PESA, Awash Birr, YaYa Wallet, bank cards
  */
-const initiateChapaPayment = async (req, res, booking, totalAmount, rentAmount, serviceFee, returnUrl, callbackUrl) => {
+const initiateChapaPayment = async ({
+  req, res, booking, totalAmount, rentAmount, serviceFee, returnUrl, callbackUrl
+}) => {
   if (!CHAPA_SECRET_KEY) {
     throw new ApiError('Chapa payment gateway not configured', 500);
   }
@@ -112,16 +143,24 @@ const initiateChapaPayment = async (req, res, booking, totalAmount, rentAmount, 
     email: req.user.email,
     first_name: req.user.name.split(' ')[0] || req.user.name,
     last_name: req.user.name.split(' ').slice(1).join(' ') || 'User',
-    phone_number: req.user.phone || '',
     tx_ref: txRef,
     callback_url: callbackUrl || defaultCallbackUrl,
-    return_url: returnUrl || defaultReturnUrl,
-    'customization[title]': 'Smart Rental System',
-    'customization[description]': `Payment for ${booking.houseId.title}`,
-    'meta[booking_id]': booking._id.toString(),
-    'meta[user_id]': req.user._id.toString(),
-    'meta[house_id]': booking.houseId._id.toString()
+    return_url: returnUrl || defaultReturnUrl
+    // Removing `customization` and `meta` completely. 
+    // Chapa's internal Vue widget crashes with `checkInGroup` error when parsing them.
   };
+
+  // Only include phone if it looks like a valid Ethiopian number
+  if (req.user.phone) {
+    const phone = req.user.phone.replace(/\s|-/g, '');
+    if (/^(\+251|0)[97]\d{8}$/.test(phone)) {
+      chapaPayload.phone_number = phone;
+    } else {
+      fileLog(`[Payment Info] Omitting invalid phone for Chapa: ${phone}`);
+    }
+  }
+
+  fileLog(`[Payment Info] Chapa Payload: ${JSON.stringify(chapaPayload)}`);
 
   try {
     // Initialize Chapa payment
@@ -132,38 +171,54 @@ const initiateChapaPayment = async (req, res, booking, totalAmount, rentAmount, 
         headers: {
           'Authorization': `Bearer ${CHAPA_SECRET_KEY}`,
           'Content-Type': 'application/json'
-        }
+        },
+        timeout: 10000
       }
     );
+
+    fileLog(`[Payment Info] Chapa Response: ${JSON.stringify(response.data)}`);
 
     if (response.data.status !== 'success') {
       throw new ApiError(response.data.message || 'Failed to initialize Chapa payment', 500);
     }
 
+    // Resolve ownerId (may be populated or plain ObjectId)
+    const ownerId = booking.ownerId._id || booking.ownerId;
+
+    fileLog(`[Payment Info] Creating payment record. ownerId=${ownerId}, houseId=${booking.houseId._id}, bookingId=${booking._id}`);
+
     // Create payment record
-    const payment = await Payment.createPaymentRecord({
-      userId: req.user._id,
-      houseId: booking.houseId._id,
-      bookingId: booking._id,
-      ownerId: booking.ownerId,
-      amount: totalAmount,
-      currency: 'ETB',
-      method: 'chapa',
-      breakdown: {
-        rent: rentAmount,
-        serviceFee,
-        deposit: 0,
-        taxes: 0
-      },
-      metadata: {
-        description: `Payment for ${booking.houseId.title}`,
-        customerEmail: req.user.email,
-        customerPhone: req.user.phone,
-        customerName: req.user.name,
-        callbackUrl: callbackUrl || defaultCallbackUrl,
-        returnUrl: returnUrl || defaultReturnUrl
-      }
-    });
+    let payment;
+    try {
+      payment = await Payment.createPaymentRecord({
+        userId: req.user._id,
+        houseId: booking.houseId._id,
+        bookingId: booking._id,
+        ownerId,
+        amount: totalAmount,
+        currency: 'ETB',
+        method: 'chapa',
+        breakdown: {
+          rent: rentAmount,
+          total: totalAmount,
+          serviceFee,
+          deposit: 0,
+          taxes: 0
+        },
+        metadata: {
+          description: `Payment for ${booking.houseId.title}`,
+          customerEmail: req.user.email,
+          customerPhone: req.user.phone,
+          customerName: req.user.name,
+          callbackUrl: callbackUrl || defaultCallbackUrl,
+          returnUrl: returnUrl || defaultReturnUrl
+        }
+      });
+      fileLog(`[Payment Info] Payment record created: ${payment._id}`);
+    } catch (dbErr) {
+      fileLog(`[Payment Error] DB Error creating payment: ${dbErr.message}`);
+      throw new ApiError('Failed to save payment record: ' + dbErr.message, 500);
+    }
 
     // Store Chapa transaction details
     payment.chapa = {
@@ -171,12 +226,22 @@ const initiateChapaPayment = async (req, res, booking, totalAmount, rentAmount, 
       checkoutUrl: response.data.data.checkout_url,
       verified: false
     };
-    payment.status = 'processing';
+    payment.status = PAYMENT_STATUS.PROCESSING;
     await payment.save();
 
     // Update booking with payment ID
     booking.paymentId = payment._id;
     await booking.save();
+
+    // Log initiation
+    await logPaymentEvent({
+      action: 'PAYMENT_INITIATED',
+      paymentId: payment._id,
+      userId: req.user._id,
+      amount: totalAmount,
+      method: 'chapa',
+      details: { txRef, bookingId: booking._id }
+    });
 
     res.status(200).json({
       success: true,
@@ -192,18 +257,36 @@ const initiateChapaPayment = async (req, res, booking, totalAmount, rentAmount, 
     });
 
   } catch (error) {
-    console.error('Chapa initiation error:', error.response?.data || error.message);
-    throw new ApiError(
-      error.response?.data?.message || 'Failed to initiate Chapa payment',
-      error.response?.status || 500
-    );
+    const chapaErrData = error.response?.data;
+    fileLog(`[Payment Error] Chapa Error: ${JSON.stringify(chapaErrData || error.message)}`);
+    console.error('[Chapa] Initiation error:', JSON.stringify(chapaErrData || error.message, null, 2));
+    
+    // Extract meaningful error message from possible object structures
+    let message = 'Failed to initiate Chapa payment';
+    if (chapaErrData?.message) {
+      if (typeof chapaErrData.message === 'string') {
+        message = chapaErrData.message;
+      } else if (typeof chapaErrData.message === 'object') {
+        // Handle nested error objects from Chapa (e.g. { message: { 'customization.title': ['...'] } })
+        const values = Object.values(chapaErrData.message);
+        message = Array.isArray(values[0]) ? values[0][0] : JSON.stringify(chapaErrData.message);
+      }
+    } else if (chapaErrData?.errorDetails) {
+      message = typeof chapaErrData.errorDetails === 'string' 
+        ? chapaErrData.errorDetails 
+        : JSON.stringify(chapaErrData.errorDetails);
+    }
+    
+    throw new ApiError(message, error.response?.status || 500);
   }
 };
 
 /**
  * Initiate Stripe payment (International)
  */
-const initiateStripePayment = async (req, res, booking, totalAmount, rentAmount, serviceFee) => {
+const initiateStripePayment = async ({
+  req, res, booking, totalAmount, rentAmount, serviceFee
+}) => {
   if (!stripe) {
     throw new ApiError('Stripe payment gateway not configured', 500);
   }
@@ -231,6 +314,7 @@ const initiateStripePayment = async (req, res, booking, totalAmount, rentAmount,
       method: 'stripe',
       breakdown: {
         rent: rentAmount,
+        total: totalAmount,
         serviceFee,
         deposit: 0,
         taxes: 0
@@ -244,11 +328,22 @@ const initiateStripePayment = async (req, res, booking, totalAmount, rentAmount,
       paymentIntentId: paymentIntent.id,
       clientSecret: paymentIntent.client_secret
     };
-    payment.status = 'processing';
+    payment.status = PAYMENT_STATUS.PROCESSING;
     await payment.save();
 
     booking.paymentId = payment._id;
     await booking.save();
+
+    // Log initiation
+    await logPaymentEvent({
+      action: 'PAYMENT_INITIATED',
+      paymentId: payment._id,
+      userId: req.user._id,
+      amount: totalAmount,
+      currency: 'USD',
+      method: 'stripe',
+      details: { paymentIntentId: paymentIntent.id, bookingId: booking._id }
+    });
 
     res.status(200).json({
       success: true,
@@ -263,8 +358,8 @@ const initiateStripePayment = async (req, res, booking, totalAmount, rentAmount,
     });
 
   } catch (stripeError) {
-    console.error('Stripe error:', stripeError);
-    throw new ApiError('Failed to create payment intent', 500);
+    console.error('[Stripe] Error:', stripeError);
+    throw new ApiError('Failed to create Stripe payment intent', 500);
   }
 };
 
@@ -274,9 +369,9 @@ const initiateStripePayment = async (req, res, booking, totalAmount, rentAmount,
  * @access  Public (Chapa)
  */
 const handleChapaWebhook = asyncHandler(async (req, res) => {
-  const { tx_ref, status, reference, amount, currency, payment_type } = req.body;
+  const { tx_ref, reference, payment_type } = req.body;
 
-  console.log('📥 Chapa webhook received:', { tx_ref, status, reference });
+  console.log(`[Chapa Webhook] Received: tx_ref=${tx_ref}, reference=${reference}`);
 
   if (!tx_ref) {
     return res.status(400).json({ success: false, message: 'Missing tx_ref' });
@@ -286,94 +381,85 @@ const handleChapaWebhook = asyncHandler(async (req, res) => {
   const payment = await Payment.findByChapaRef(tx_ref);
 
   if (!payment) {
-    console.error('Payment not found for tx_ref:', tx_ref);
-    return res.status(404).json({ success: false, message: 'Payment not found' });
+    console.error(`[Chapa Webhook] Payment not found for tx_ref: ${tx_ref}`);
+    return res.status(404).json({ success: false, message: 'Payment record not found' });
   }
 
-  // Verify payment with Chapa API (server-side verification)
-  const verification = await verifyPaymentWithChapa(tx_ref);
+  // Verification helper to avoid duplicate logic
+  const verifyAndProcess = async () => {
+    const verification = await verifyPaymentWithChapa(tx_ref);
 
-  if (!verification.success || !verification.verified) {
-    console.error('Chapa verification failed:', verification.error);
-    
-    // Update payment as failed
-    payment.status = 'failed';
-    payment.chapa.chapaResponse = verification.data || { error: verification.error };
-    await payment.save();
+    if (!verification.success || !verification.verified) {
+      console.error(`[Chapa Webhook] Verification failed for ${tx_ref}:`, verification.error);
+      
+      payment.status = PAYMENT_STATUS.FAILED;
+      payment.chapa.chapaResponse = verification.data || { error: verification.error };
+      await payment.save();
 
-    // Update booking
-    await BookingRequest.findByIdAndUpdate(payment.bookingId, {
-      paymentStatus: 'failed'
-    });
+      await BookingRequest.findByIdAndUpdate(payment.bookingId, { paymentStatus: 'failed' });
 
-    // Notify tenant of failure
-    const io = req.app.get('io');
-    if (io) {
-      io.to(`user_${payment.userId}`).emit('paymentFailed', {
+      await logPaymentEvent({
+        action: 'PAYMENT_FAILED',
         paymentId: payment._id,
-        message: 'Payment verification failed'
+        userId: payment.userId,
+        amount: payment.amount,
+        method: 'chapa',
+        details: { txRef: tx_ref, error: verification.error },
+        severity: 'high'
       });
+
+      return { success: false, message: 'Verification failed' };
     }
 
-    return res.status(200).json({ success: false, message: 'Verification failed' });
-  }
+    // Success
+    payment.status = PAYMENT_STATUS.SUCCEEDED;
+    payment.paidAt = new Date();
+    payment.transactionId = reference || verification.data?.reference;
+    payment.chapa = {
+      ...payment.chapa,
+      verified: true,
+      paymentMethod: payment_type || verification.data?.payment_type,
+      chapaResponse: verification.data
+    };
+    await payment.save();
 
-  // Payment verified successfully
-  payment.status = 'succeeded';
-  payment.paidAt = new Date();
-  payment.transactionId = reference || verification.data?.reference;
-  payment.chapa = {
-    ...payment.chapa,
-    verified: true,
-    paymentMethod: payment_type || verification.data?.payment_type,
-    chapaResponse: verification.data
-  };
-  await payment.save();
+    await BookingRequest.findByIdAndUpdate(payment.bookingId, { paymentStatus: 'paid' });
 
-  // Update booking payment status
-  await BookingRequest.findByIdAndUpdate(payment.bookingId, {
-    paymentStatus: 'paid'
-  });
-
-  // Log payment success
-  await AdminLog.logAction({
-    action: 'PAYMENT_PROCESSED',
-    targetId: payment._id,
-    targetType: 'Payment',
-    performedBy: payment.userId,
-    details: {
+    await logPaymentEvent({
+      action: 'PAYMENT_PROCESSED',
+      paymentId: payment._id,
+      userId: payment.userId,
       amount: payment.amount,
-      currency: payment.currency,
       method: 'chapa',
-      paymentType: payment_type || verification.data?.payment_type,
-      txRef: tx_ref
-    },
-    severity: 'low'
-  });
+      details: { txRef: tx_ref, paymentType: payment.chapa.paymentMethod }
+    });
 
-  // Notify tenant and owner via Socket.io
+    return { success: true };
+  };
+
+  const result = await verifyAndProcess();
+
+  // Notify via Socket.io
   const io = req.app.get('io');
   if (io) {
-    // Notify tenant
-    io.to(`user_${payment.userId}`).emit('paymentSuccess', {
+    const eventName = result.success ? 'payment:success' : 'payment:failed';
+    io.to(`user_${payment.userId}`).emit(eventName, {
       paymentId: payment._id,
       amount: payment.amount,
-      currency: payment.currency,
-      message: 'Payment successful!'
+      message: result.success ? 'Payment verified successfully!' : 'Payment verification failed'
     });
 
-    // Notify owner
-    io.to(`user_${payment.ownerId}`).emit('paymentReceived', {
-      paymentId: payment._id,
-      amount: payment.amount,
-      currency: payment.currency,
-      tenantId: payment.userId,
-      houseId: payment.houseId,
-      message: 'You received a payment!'
-    });
+    if (result.success) {
+      io.to(`user_${payment.ownerId}`).emit('payment:received', {
+        paymentId: payment._id,
+        amount: payment.amount,
+        tenantId: payment.userId,
+        message: 'You have received a new rental payment!'
+      });
+    }
   }
 
-  res.status(200).json({ success: true, message: 'Payment verified and processed' });
+  res.status(200).json(result);
 });
 
 /**
@@ -398,22 +484,29 @@ const getPaymentStatus = asyncHandler(async (req, res) => {
     payment.ownerId.toString() !== req.user._id.toString() &&
     req.user.role !== 'admin'
   ) {
-    throw new ApiError('Not authorized', 403);
+    throw new ApiError('Not authorized to view this payment status', 403);
   }
 
   // If payment is processing via Chapa, verify current status
-  if (payment.method === 'chapa' && payment.status === 'processing' && payment.chapa?.txRef) {
+  if (payment.method === 'chapa' && payment.status === PAYMENT_STATUS.PROCESSING && payment.chapa?.txRef) {
     const verification = await verifyPaymentWithChapa(payment.chapa.txRef);
     
     if (verification.verified) {
-      payment.status = 'succeeded';
+      payment.status = PAYMENT_STATUS.SUCCEEDED;
       payment.paidAt = new Date();
       payment.chapa.verified = true;
       payment.chapa.chapaResponse = verification.data;
       await payment.save();
 
-      await BookingRequest.findByIdAndUpdate(payment.bookingId, {
-        paymentStatus: 'paid'
+      await BookingRequest.findByIdAndUpdate(payment.bookingId, { paymentStatus: 'paid' });
+
+      await logPaymentEvent({
+        action: 'PAYMENT_PROCESSED',
+        paymentId: payment._id,
+        userId: payment.userId,
+        amount: payment.amount,
+        method: 'chapa',
+        details: { txRef: payment.chapa.txRef, source: 'polling' }
       });
     }
   }
@@ -451,51 +544,50 @@ const updatePaymentStatus = asyncHandler(async (req, res) => {
 
   // Validate status transition
   const validTransitions = {
-    pending: ['processing', 'failed', 'cancelled'],
-    processing: ['succeeded', 'failed'],
-    succeeded: ['refunded', 'partially_refunded'],
-    failed: ['pending'],
-    refunded: [],
-    partially_refunded: [],
-    cancelled: []
+    [PAYMENT_STATUS.PENDING]: [PAYMENT_STATUS.PROCESSING, PAYMENT_STATUS.FAILED, PAYMENT_STATUS.CANCELLED],
+    [PAYMENT_STATUS.PROCESSING]: [PAYMENT_STATUS.SUCCEEDED, PAYMENT_STATUS.FAILED],
+    [PAYMENT_STATUS.SUCCEEDED]: [PAYMENT_STATUS.REFUNDED, PAYMENT_STATUS.PARTIALLY_REFUNDED],
+    [PAYMENT_STATUS.FAILED]: [PAYMENT_STATUS.PENDING],
+    [PAYMENT_STATUS.REFUNDED]: [],
+    [PAYMENT_STATUS.PARTIALLY_REFUNDED]: [],
+    [PAYMENT_STATUS.CANCELLED]: []
   };
 
   if (!validTransitions[payment.status]?.includes(status)) {
     throw new ApiError(`Invalid status transition from ${payment.status} to ${status}`, 400);
   }
 
+  const oldStatus = payment.status;
   payment.status = status;
   
   if (transactionId) {
     payment.transactionId = transactionId;
   }
 
-  if (status === 'succeeded') {
+  if (status === PAYMENT_STATUS.SUCCEEDED) {
     payment.paidAt = new Date();
-    await BookingRequest.findByIdAndUpdate(payment.bookingId, {
-      paymentStatus: 'paid'
-    });
+    await BookingRequest.findByIdAndUpdate(payment.bookingId, { paymentStatus: 'paid' });
 
-    await AdminLog.logAction({
+    await logPaymentEvent({
       action: 'PAYMENT_PROCESSED',
-      targetId: payment._id,
-      targetType: 'Payment',
-      performedBy: req.user?._id || payment.userId,
-      details: { amount: payment.amount, method: payment.method },
-      severity: 'low'
+      paymentId: payment._id,
+      userId: req.user?._id || payment.userId,
+      amount: payment.amount,
+      method: payment.method,
+      details: { source: 'manual_update', oldStatus }
     });
   }
 
-  if (status === 'failed') {
-    await BookingRequest.findByIdAndUpdate(payment.bookingId, {
-      paymentStatus: 'failed'
-    });
+  if (status === PAYMENT_STATUS.FAILED) {
+    await BookingRequest.findByIdAndUpdate(payment.bookingId, { paymentStatus: 'failed' });
 
-    await AdminLog.logAction({
+    await logPaymentEvent({
       action: 'PAYMENT_FAILED',
-      targetId: payment._id,
-      targetType: 'Payment',
-      performedBy: req.user?._id || payment.userId,
+      paymentId: payment._id,
+      userId: req.user?._id || payment.userId,
+      amount: payment.amount,
+      method: payment.method,
+      details: { source: 'manual_update', oldStatus },
       severity: 'high'
     });
   }
@@ -505,7 +597,7 @@ const updatePaymentStatus = asyncHandler(async (req, res) => {
   // Notify user
   const io = req.app.get('io');
   if (io) {
-    io.to(`user_${payment.userId}`).emit('paymentUpdate', {
+    io.to(`user_${payment.userId}`).emit('payment:update', {
       paymentId: payment._id,
       status,
       amount: payment.amount
@@ -514,7 +606,7 @@ const updatePaymentStatus = asyncHandler(async (req, res) => {
 
   res.status(200).json({
     success: true,
-    message: 'Payment status updated',
+    message: `Payment status updated to ${status}`,
     data: { payment }
   });
 });
@@ -539,48 +631,86 @@ const handleStripeWebhook = asyncHandler(async (req, res) => {
       process.env.STRIPE_WEBHOOK_SECRET
     );
   } catch (err) {
-    console.error('Stripe webhook signature verification failed:', err.message);
+    console.error('[Stripe Webhook] Signature verification failed:', err.message);
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
+  const io = req.app.get('io');
+
   switch (event.type) {
-    case 'payment_intent.succeeded':
+    case 'payment_intent.succeeded': {
       const paymentIntent = event.data.object;
-      const payment = await Payment.findOne({
-        'stripe.paymentIntentId': paymentIntent.id
-      });
+      const payment = await Payment.findOne({ 'stripe.paymentIntentId': paymentIntent.id });
 
       if (payment) {
-        payment.status = 'succeeded';
+        payment.status = PAYMENT_STATUS.SUCCEEDED;
         payment.paidAt = new Date();
         payment.transactionId = paymentIntent.latest_charge;
         payment.stripe.chargeId = paymentIntent.latest_charge;
         await payment.save();
 
-        await BookingRequest.findByIdAndUpdate(payment.bookingId, {
-          paymentStatus: 'paid'
+        await BookingRequest.findByIdAndUpdate(payment.bookingId, { paymentStatus: 'paid' });
+
+        await logPaymentEvent({
+          action: 'PAYMENT_PROCESSED',
+          paymentId: payment._id,
+          userId: payment.userId,
+          amount: payment.amount,
+          currency: 'USD',
+          method: 'stripe',
+          details: { paymentIntentId: paymentIntent.id }
         });
+
+        if (io) {
+          io.to(`user_${payment.userId}`).emit('payment:success', {
+            paymentId: payment._id,
+            amount: payment.amount,
+            message: 'International payment successful!'
+          });
+          io.to(`user_${payment.ownerId}`).emit('payment:received', {
+            paymentId: payment._id,
+            amount: payment.amount,
+            tenantId: payment.userId,
+            message: 'International payment received!'
+          });
+        }
       }
       break;
+    }
 
-    case 'payment_intent.payment_failed':
+    case 'payment_intent.payment_failed': {
       const failedIntent = event.data.object;
-      const failedPayment = await Payment.findOne({
-        'stripe.paymentIntentId': failedIntent.id
-      });
+      const payment = await Payment.findOne({ 'stripe.paymentIntentId': failedIntent.id });
 
-      if (failedPayment) {
-        failedPayment.status = 'failed';
-        await failedPayment.save();
+      if (payment) {
+        payment.status = PAYMENT_STATUS.FAILED;
+        await payment.save();
 
-        await BookingRequest.findByIdAndUpdate(failedPayment.bookingId, {
-          paymentStatus: 'failed'
+        await BookingRequest.findByIdAndUpdate(payment.bookingId, { paymentStatus: 'failed' });
+
+        await logPaymentEvent({
+          action: 'PAYMENT_FAILED',
+          paymentId: payment._id,
+          userId: payment.userId,
+          amount: payment.amount,
+          currency: 'USD',
+          method: 'stripe',
+          details: { error: failedIntent.last_payment_error?.message },
+          severity: 'high'
         });
+
+        if (io) {
+          io.to(`user_${payment.userId}`).emit('payment:failed', {
+            paymentId: payment._id,
+            message: 'Stripe payment failed'
+          });
+        }
       }
       break;
+    }
 
     default:
-      console.log(`Unhandled Stripe event type: ${event.type}`);
+      console.log(`[Stripe Webhook] Unhandled event type: ${event.type}`);
   }
 
   res.status(200).json({ received: true });
@@ -601,7 +731,7 @@ const processRefund = asyncHandler(async (req, res) => {
     throw new ApiError('Payment not found', 404);
   }
 
-  if (payment.status !== 'succeeded') {
+  if (payment.status !== PAYMENT_STATUS.SUCCEEDED) {
     throw new ApiError('Can only refund successful payments', 400);
   }
 
@@ -618,51 +748,50 @@ const processRefund = asyncHandler(async (req, res) => {
     try {
       const refund = await stripe.refunds.create({
         payment_intent: payment.stripe.paymentIntentId,
-        amount: refundAmount * 100
+        amount: Math.round(refundAmount * 100)
       });
       refundId = refund.id;
     } catch (stripeError) {
-      console.error('Stripe refund error:', stripeError);
+      console.error('[Stripe] Refund error:', stripeError);
       throw new ApiError('Failed to process Stripe refund', 500);
     }
   } else if (payment.method === 'chapa') {
-    // Note: Chapa refunds may need to be processed manually or via their dashboard
-    // This creates a record of the refund request
-    refundId = `REFUND-${Date.now()}`;
-    console.log('⚠️ Chapa refund requested - process manually via Chapa dashboard');
+    // Note: Chapa refunds are currently manual via dashboard
+    refundId = `REFUND-MANUAL-${Date.now()}`;
+    console.log(`[Chapa] Manual refund requested for ${payment._id}. Reference: ${refundId}`);
   }
 
   // Update payment record
   await payment.processRefund(refundAmount, reason, refundId);
 
   // Update booking
-  await BookingRequest.findByIdAndUpdate(payment.bookingId, {
-    paymentStatus: 'refunded'
-  });
+  await BookingRequest.findByIdAndUpdate(payment.bookingId, { paymentStatus: 'refunded' });
 
   // Log refund
-  await AdminLog.logAction({
+  await logPaymentEvent({
     action: 'PAYMENT_REFUNDED',
-    targetId: payment._id,
-    targetType: 'Payment',
-    performedBy: req.user._id,
-    details: { refundAmount, reason, refundId },
+    paymentId: payment._id,
+    userId: req.user._id,
+    amount: refundAmount,
+    method: payment.method,
+    details: { reason, refundId, originalAmount: payment.amount },
     severity: 'high'
   });
 
-  // Notify user
+  // Notify user via Socket.io
   const io = req.app.get('io');
   if (io) {
-    io.to(`user_${payment.userId}`).emit('refundProcessed', {
+    io.to(`user_${payment.userId}`).emit('refund:processed', {
       paymentId: payment._id,
       refundAmount,
-      reason
+      reason,
+      message: 'Your refund has been processed.'
     });
   }
 
   res.status(200).json({
     success: true,
-    message: 'Refund processed successfully',
+    message: 'Refund processed and recorded successfully',
     data: { payment }
   });
 });
@@ -676,14 +805,25 @@ const getPaymentHistory = asyncHandler(async (req, res) => {
   const { status, method, page = 1, limit = 20 } = req.query;
   const skip = (Number(page) - 1) * Number(limit);
 
-  const filter = { userId: req.user._id };
+  const filter = {};
+  
+  // Scoping: tenants see their own, owners see payments for their houses, admins see all
+  if (req.user.role === 'admin') {
+    // No filter refinement
+  } else if (req.user.role === 'owner') {
+    filter.ownerId = req.user._id;
+  } else {
+    filter.userId = req.user._id;
+  }
+
   if (status) filter.status = status;
   if (method) filter.method = method;
 
   const [payments, total] = await Promise.all([
     Payment.find(filter)
-      .populate('houseId', 'title images')
-      .populate('bookingId', 'startDate endDate')
+      .populate('houseId', 'title images location')
+      .populate('bookingId', 'startDate endDate status')
+      .populate('userId', 'name email')
       .sort('-createdAt')
       .skip(skip)
       .limit(Number(limit)),
@@ -713,18 +853,20 @@ const getPaymentById = asyncHandler(async (req, res) => {
   const payment = await Payment.findById(req.params.id)
     .populate('houseId', 'title images location')
     .populate('bookingId', 'startDate endDate status')
-    .populate('ownerId', 'name email');
+    .populate('ownerId', 'name email')
+    .populate('userId', 'name email phone');
 
   if (!payment) {
     throw new ApiError('Payment not found', 404);
   }
 
-  if (
-    payment.userId.toString() !== req.user._id.toString() &&
-    payment.ownerId._id.toString() !== req.user._id.toString() &&
-    req.user.role !== 'admin'
-  ) {
-    throw new ApiError('Not authorized', 403);
+  // Authorization check
+  const isTenant = payment.userId._id.toString() === req.user._id.toString();
+  const isOwner = payment.ownerId._id.toString() === req.user._id.toString();
+  const isAdmin = req.user.role === 'admin';
+
+  if (!isTenant && !isOwner && !isAdmin) {
+    throw new ApiError('Not authorized to access this payment record', 403);
   }
 
   res.status(200).json({
