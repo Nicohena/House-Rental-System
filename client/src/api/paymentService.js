@@ -6,8 +6,8 @@ const paymentService = {
     return response.data;
   },
 
-  getPaymentHistory: async () => {
-    const response = await apiClient.get('/payments');
+  getPaymentHistory: async (params) => {
+    const response = await apiClient.get('/payments', { params });
     return response.data;
   },
 
@@ -26,8 +26,8 @@ const paymentService = {
     return response.data;
   },
 
-  processRefund: async (id) => {
-    const response = await apiClient.post(`/payments/${id}/refund`);
+  processRefund: async (id, refundData) => {
+    const response = await apiClient.post(`/payments/${id}/refund`, refundData);
     return response.data;
   }
 };

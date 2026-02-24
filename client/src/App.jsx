@@ -27,6 +27,7 @@ const OwnerBookings = lazy(() => import("./pages/owner/Bookings"));
 const EditListing = lazy(() => import("./pages/owner/EditListing"));
 const ChatPage = lazy(() => import("./pages/chat/ChatPage"));
 const PaymentHistory = lazy(() => import("./pages/payment/PaymentHistory"));
+const PaymentSuccess = lazy(() => import("./pages/payment/PaymentSuccess"));
 const Profile = lazy(() => import("./pages/user/Profile"));
 const Settings = lazy(() => import("./pages/user/Settings"));
 const AdminDashboard = lazy(() => import("./pages/admin/Dashboard"));
@@ -146,6 +147,8 @@ function App() {
                     </ProtectedRoute>
                   }
                 />
+                {/* Chapa redirects here after checkout */}
+                <Route path="/payment/success" element={<PaymentSuccess />} />
                 <Route
                   path="/profile"
                   element={
