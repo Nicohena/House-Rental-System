@@ -23,6 +23,7 @@ import recommendationService from "../../api/recommendationService";
 import { HouseCard } from "../../components/pieces/HouseCard";
 import PaymentModal from "../../components/payment/PaymentModal";
 import userService from "../../api/userService";
+import toast from "react-hot-toast";
 
 // Extracted sub-components
 import {
@@ -33,106 +34,8 @@ import {
   ReviewsSection,
   PropertyMapModal,
 } from "../../components/details";
+import BookingWidget from "../../components/booking/BookingWidget";
 
-// ─────────────────────────────────────────────────────────────
-// BookingWidget (kept inline — tightly coupled to booking state)
-// ─────────────────────────────────────────────────────────────
-const BookingWidget = ({
-  price,
-  rating,
-  reviewsCount,
-  onBook,
-  loading,
-  disabled,
-  disabledReason,
-  startDate,
-  setStartDate,
-  endDate,
-  setEndDate,
-  totalPrice,
-}) => (
-  <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-xl top-28 h-fit">
-    <div className="flex justify-between items-center mb-6">
-      <div className="flex items-baseline gap-1">
-        <span className="text-2xl font-black text-slate-900">ETB {price}</span>
-        <span className="text-sm text-slate-500 font-medium">/ month</span>
-      </div>
-      <div className="flex items-center gap-1">
-        <Star size={14} className="fill-warning text-warning" />
-        <span className="text-sm font-bold">{rating}</span>
-        <span className="text-xs text-slate-400">({reviewsCount})</span>
-      </div>
-    </div>
-
-    <div className="grid grid-cols-1 border border-slate-200 rounded-2xl mb-4 overflow-hidden">
-      <div className="p-3 border-b border-slate-200 hover:bg-slate-50">
-        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">
-          Check-in
-        </p>
-        <input
-          type="date"
-          value={startDate}
-          min={new Date().toISOString().split("T")[0]}
-          onChange={(e) => setStartDate(e.target.value)}
-          className="w-full text-sm font-bold text-slate-900 bg-transparent outline-none cursor-pointer"
-        />
-      </div>
-      <div className="p-3 hover:bg-slate-50">
-        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">
-          Check-out
-        </p>
-        <input
-          type="date"
-          value={endDate}
-          min={startDate || new Date().toISOString().split("T")[0]}
-          onChange={(e) => setEndDate(e.target.value)}
-          className="w-full text-sm font-bold text-slate-900 bg-transparent outline-none cursor-pointer"
-        />
-      </div>
-    </div>
-
-    <button
-      onClick={onBook}
-      disabled={loading || disabled}
-      className="w-full py-4 bg-primary text-white font-bold rounded-2xl hover:bg-primary-dark transition-all shadow-lg shadow-primary/20 mb-2 disabled:opacity-50"
-    >
-      {loading
-        ? "Processing..."
-        : disabled
-          ? disabledReason || "Unavailable"
-          : "Request Booking"}
-    </button>
-    {disabled && disabledReason && (
-      <p className="text-xs text-center text-amber-600 font-medium mb-4">
-        {disabledReason}
-      </p>
-    )}
-    <p className="text-xs text-center text-slate-400 italic mb-6">
-      You won't be charged yet
-    </p>
-
-    <div className="space-y-4 pt-4 border-t border-slate-100">
-      <div className="flex justify-between text-sm">
-        <span className="text-slate-600 underline">Subtotal</span>
-        <span className="text-slate-900 font-medium font-mono">
-          ETB {totalPrice.toLocaleString()}
-        </span>
-      </div>
-      <div className="flex justify-between text-sm">
-        <span className="text-slate-600 underline">Service Fee</span>
-        <span className="text-slate-900 font-medium font-mono">ETB 350</span>
-      </div>
-      <div className="flex justify-between pt-4 border-t border-slate-100">
-        <span className="text-lg font-black text-slate-900">Total</span>
-        <span className="text-lg font-black text-slate-900 font-mono">
-          ETB {(totalPrice + 350).toLocaleString()}
-        </span>
-      </div>
-    </div>
-  </div>
-);
-
-// ─────────────────────────────────────────────────────────────
 // DetailsPage — main component
 // ─────────────────────────────────────────────────────────────
 const DetailsPage = () => {
@@ -142,7 +45,6 @@ const DetailsPage = () => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [bookingLoading, setBookingLoading] = useState(false);
   const [showPayment, setShowPayment] = useState(false);
   const [currentBooking, setCurrentBooking] = useState(null);
   const [isSaved, setIsSaved] = useState(false);
@@ -155,39 +57,6 @@ const DetailsPage = () => {
   const [ratingHover, setRatingHover] = useState(0);
   const [ratingComment, setRatingComment] = useState("");
   const [ratingLoading, setRatingLoading] = useState(false);
-
-  // Booking states
-  const [startDate, setStartDate] = useState(
-    new Date().toISOString().split("T")[0],
-  );
-  const [endDate, setEndDate] = useState(() => {
-    const d = new Date();
-    d.setMonth(d.getMonth() + 1);
-    return d.toISOString().split("T")[0];
-  });
-  const [totalPrice, setTotalPrice] = useState(0);
-
-  // ── Fix #5: Improved price calc with dynamic month length ──
-  useEffect(() => {
-    if (!data?.house?.price || !startDate || !endDate) return;
-
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-
-    if (end > start) {
-      const diffDays = Math.ceil((end - start) / (1000 * 60 * 60 * 24));
-      const daysInMonth = new Date(
-        start.getFullYear(),
-        start.getMonth() + 1,
-        0,
-      ).getDate();
-      const dailyRate = data.house.price / daysInMonth;
-      const calculated = Math.round(dailyRate * diffDays);
-      setTotalPrice(calculated);
-    } else {
-      setTotalPrice(0);
-    }
-  }, [startDate, endDate, data?.house?.price]);
 
   // Fetch house details
   useEffect(() => {
@@ -255,70 +124,7 @@ const DetailsPage = () => {
 
   // ── Fixes #1, #3, #4: Cleaned handleBookingRequest ──
   const handleBookingRequest = async () => {
-    if (!user) {
-      alert("Please login to book a house");
-      return;
-    }
-
-    if (isOwner) {
-      alert("You cannot book your own property");
-      return;
-    }
-
-    // Fix #4: Validate dates exist
-    if (!startDate || !endDate) {
-      alert("Please select both check-in and check-out dates");
-      return;
-    }
-
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    // Fix #4: Prevent past start date
-    if (start < today) {
-      alert("Check-in date cannot be in the past");
-      return;
-    }
-
-    // Fix #4: Prevent invalid range
-    if (end <= start) {
-      alert("Check-out date must be after check-in date");
-      return;
-    }
-
-    // Fix #3: Minimum lease duration validation
-    if (data?.house?.minLeaseDuration) {
-      const diffMs = end - start;
-      const diffMonths = diffMs / (1000 * 60 * 60 * 24 * 30.44); // avg month
-      if (diffMonths < data.house.minLeaseDuration) {
-        alert(
-          `Minimum lease is ${data.house.minLeaseDuration} month${data.house.minLeaseDuration !== 1 ? "s" : ""}`,
-        );
-        return;
-      }
-    }
-
-    try {
-      setBookingLoading(true);
-
-      const bookingData = {
-        houseId: id,
-        startDate: new Date(startDate),
-        endDate: new Date(endDate),
-      };
-
-      await bookingService.createBooking(bookingData);
-      // Fix #1: Removed duplicate setBookingLoading(false) — only in finally
-      alert("Booking request sent! You can pay once the owner approves.");
-    } catch (err) {
-      const errorMsg =
-        err.response?.data?.message || "Failed to create booking";
-      alert(errorMsg);
-    } finally {
-      setBookingLoading(false);
-    }
+    // Logic moved to BookingWidget.jsx
   };
 
   const handleStartChat = () => {
@@ -349,9 +155,11 @@ const DetailsPage = () => {
       if (isSaved) {
         await userService.removeSavedHome(user.id, data.house._id);
         setIsSaved(false);
+        toast.success("Removed from saved homes");
       } else {
         await userService.addSavedHome(user.id, data.house._id);
         setIsSaved(true);
+        toast.success("Added to saved homes");
       }
     } catch (err) {
       console.error("Failed to update saved home", err);
@@ -647,20 +455,7 @@ const DetailsPage = () => {
 
           {/* ── Booking Widget (sidebar) ── */}
           <div className="relative">
-            <BookingWidget
-              price={house.price}
-              rating={house.averageRating?.toFixed(1)}
-              reviewsCount={house.ratings?.length}
-              onBook={handleBookingRequest}
-              loading={bookingLoading}
-              disabled={isOwner}
-              disabledReason={isOwner ? "You own this property" : null}
-              startDate={startDate}
-              setStartDate={setStartDate}
-              endDate={endDate}
-              setEndDate={setEndDate}
-              totalPrice={totalPrice}
-            />
+            <BookingWidget house={house} user={user} />
           </div>
         </div>
 
