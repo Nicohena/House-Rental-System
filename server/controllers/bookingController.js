@@ -42,22 +42,45 @@ const createBooking = asyncHandler(async (req, res) => {
     throw new ApiError('You cannot book your own property', 400);
   }
 
-  // Check for date overlap with existing bookings
+  // Perform validations
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  if (start < today) {
+    throw new ApiError('Check-in date cannot be in the past', 400);
+  }
+
+  if (end <= start) {
+    throw new ApiError('Check-out date must be after check-in date', 400);
+  }
+
+  // Validate minimum lease duration
+  if (house.minLeaseDuration) {
+    const diffMs = end - start;
+    const diffMonths = diffMs / (1000 * 60 * 60 * 24 * 30.44); // avg month length
+    if (diffMonths < house.minLeaseDuration) {
+      throw new ApiError(`Minimum lease duration is ${house.minLeaseDuration} month${house.minLeaseDuration !== 1 ? 's' : ''}`, 400);
+    }
+  }
+
+  // Check for date overlap with existing approved/pending bookings
   const hasOverlap = await BookingRequest.hasOverlap(
     houseId,
-    new Date(startDate),
-    new Date(endDate)
+    start,
+    end
   );
 
   if (hasOverlap) {
-    throw new ApiError('Selected dates are not available', 400);
+    throw new ApiError('The selected dates overlap with an existing booking', 400);
   }
 
-  // Calculate total amount
-  const start = new Date(startDate);
-  const end = new Date(endDate);
+  // Calculate total price dynamically matching frontend logic
   const diffDays = Math.ceil((end - start) / (1000 * 60 * 60 * 24));
-  const totalAmount = Math.round((house.price / 30) * diffDays); // Daily rate from monthly price
+  const daysInMonth = new Date(start.getFullYear(), start.getMonth() + 1, 0).getDate();
+  const dailyRate = house.price / daysInMonth;
+  const totalAmount = Math.round(dailyRate * diffDays);
 
   // Create booking request
   const booking = await BookingRequest.create({
@@ -445,6 +468,31 @@ const cancelBooking = asyncHandler(async (req, res, next) => {
   return updateBooking(req, res, next);
 });
 
+/**
+ * @desc    Get unavailable dates for a house
+ * @route   GET /api/bookings/house/:houseId/unavailable-dates
+ * @access  Public
+ */
+const getUnavailableDates = asyncHandler(async (req, res) => {
+  const { houseId } = req.params;
+
+  const bookings = await BookingRequest.find({
+    houseId,
+    status: { $in: ['approved', 'pending'] },
+    endDate: { $gte: new Date() }
+  }).select('startDate endDate');
+
+  res.status(200).json({
+    success: true,
+    data: {
+      unavailableDates: bookings.map(b => ({
+        start: b.startDate,
+        end: b.endDate
+      }))
+    }
+  });
+});
+
 module.exports = {
   createBooking,
   getBookings,
@@ -454,5 +502,6 @@ module.exports = {
   getAllBookings,
   getPendingBookings,
   getRevenueAnalytics,
-  cancelBooking
+  cancelBooking,
+  getUnavailableDates
 };

@@ -22,10 +22,14 @@ const {
   getAllBookings,
   getPendingBookings,
   getRevenueAnalytics,
-  cancelBooking
+  cancelBooking,
+  getUnavailableDates
 } = require('../controllers/bookingController');
 
-// All routes require authentication
+// Public routes (no authentication required)
+router.get('/house/:houseId/unavailable-dates', getUnavailableDates);
+
+// All routes below require authentication
 router.use(protect);
 
 // Booking routes

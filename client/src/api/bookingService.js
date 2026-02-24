@@ -60,6 +60,11 @@ const bookingService = {
   getRevenueAnalytics: async (timeRange = '6m') => {
     const response = await apiClient.get(`/bookings/revenue?range=${timeRange}`);
     return response.data;
+  },
+
+  getUnavailableDates: async (houseId) => {
+    const response = await apiClient.get(`/bookings/house/${houseId}/unavailable-dates`);
+    return response.data;
   }
 };
 
